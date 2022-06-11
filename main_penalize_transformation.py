@@ -3,10 +3,6 @@ import os
 import os.path as osp
 import time
 import json
-from tqdm import tqdm
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 import numpy as np
 import torch
@@ -16,14 +12,15 @@ import torch.optim
 import models
 import ebms
 from ebms import ActRateTracker
-from datasets import load_dataset
-from tools.penalize_transformation import validate, train
+from datasets import load_dataset, get_num_classes
+from tools.penalize_transformation import validate, train, plot_curve, save_stats, sample_input, eval_acc_loss
+from metrics.calc_info import calc_information_for_epoch_KDE
 from tools.lib import update_lr, save_obj, set_seed
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument("--data-root", type=str, default="/data1/limingjie/data",
+    parser = argparse.ArgumentParser(description='Penalize the transformation complexity')
+    parser.add_argument("--data-root", type=str, default="./data",
                         help="the root folder of datasets")
     parser.add_argument("--dataset", type=str, default="cifar10",
                         help="the name of the dataset")
@@ -66,8 +63,13 @@ def parse_args():
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1234)
 
+    parser.add_argument("--evaluate", action="store_true")
+    parser.add_argument("--num-per-class", type=int, default=200)
+
     args = parser.parse_args()
+    print()
     print(args)
+    print()
     return args
 
 
@@ -85,98 +87,7 @@ def load_model(args):
     return model, f_list, q_list, optimizer, f_optimizer_list
 
 
-def plot_curve(plot_dict: dict, save_path: str):
-    num_figures = len(plot_dict) - 1
-    n_rows = int(np.ceil(num_figures / 4))
-
-    plt.figure(figsize=(16, 3.75 * n_rows), dpi=200)
-
-    epoch = len(plot_dict[list(plot_dict.keys())[0]])
-    X = np.arange(1, epoch + 1)
-
-    plt.subplot(n_rows, 4, 1)
-    plt.xlabel('epoch')
-    plt.ylabel(r'$Loss_{DNN}=Loss_{label}+\lambda Loss_{compl.}$')
-    plt.plot(X, plot_dict["loss_total"], label=r"$Loss_{DNN}$")
-    plt.legend()
-
-    plt.subplot(n_rows, 4, 2)
-    plt.xlabel('epoch')
-    plt.ylabel('train_test_precision')
-    plt.plot(X, plot_dict["train_acc"], color='b', label="train_acc")
-    plt.plot(X, plot_dict["test_acc"], color='r', label="test_acc")
-    plt.legend()
-
-    plt.subplot(n_rows, 4, 3)
-    plt.xlabel('epoch')
-    plt.ylabel(r'$Loss_{task}$')
-    plt.plot(X, plot_dict["loss_label"], label=r"$Loss_{task}$")
-    plt.legend()
-
-    plt.subplot(n_rows, 4, 4)
-    plt.xlabel('epoch')
-    plt.ylabel(r'\lambda $Loss_{compl.}$')
-    plt.plot(X, plot_dict["loss_compl"], label=r"$\lambda Loss_{compl.}$")
-    plt.legend()
-
-    fig_id = 5
-    ebm_id = 0
-    while True:
-        if f"loss_compl_{ebm_id}" not in plot_dict:
-            break
-        plt.subplot(n_rows, 4, fig_id)
-        plt.xlabel('epoch')
-        plt.ylabel(r'$Loss_{compl.,' + f'{ebm_id}' + r'}$')
-        plt.plot(X, plot_dict[f"loss_compl_{ebm_id}"], label=r'$Loss_{compl.,' + f'{ebm_id}' + r'}$')
-        plt.legend()
-        ebm_id += 1
-        fig_id += 1
-
-    ebm_id = 0
-    while True:
-        if f"loss_f_{ebm_id}" not in plot_dict:
-            break
-        plt.subplot(n_rows, 4, fig_id)
-        plt.xlabel('epoch')
-        plt.ylabel(r'$L_{f, ' + f'{ebm_id}' + r'}$')
-        plt.plot(X, plot_dict[f"loss_f_{ebm_id}"], label=r'$L_{f, ' + f'{ebm_id}' + r'}$')
-        plt.legend()
-        ebm_id += 1
-        fig_id += 1
-
-    ebm_id = 0
-    while True:
-        if f"p_{ebm_id}" not in plot_dict:
-            break
-        plt.subplot(n_rows, 4, fig_id)
-        plt.xlabel('epoch')
-        plt.ylabel(r"$\hat{p}_" + f"{ebm_id}" + r"$")
-        plt.plot(X, plot_dict[f"p_{ebm_id}"], label=r"$\hat{p}_" + f"{ebm_id}" + r"$")
-        plt.legend()
-        ebm_id += 1
-        fig_id += 1
-
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close("all")
-
-
-def save_stats(plot_dict: dict, save_path: str):
-    item_length = len(plot_dict[list(plot_dict.keys())[0]])
-    for key in plot_dict.keys():
-        assert len(plot_dict[key]) == item_length
-    with open(save_path, "w") as f:
-        print(",".join(list(plot_dict.keys())), file=f)
-        for i in range(item_length):
-            for key in plot_dict.keys():
-                f.write(f"{plot_dict[key][i]},")
-            f.write("\n")
-    return
-
-
-def main():
-    args = parse_args()
-
+def setup(args):
     seed = args.seed
     set_seed(seed)
 
@@ -189,12 +100,25 @@ def main():
         args.save_folder = osp.join(args.save_folder, f"dataset={args.dataset}_model={args.arch}",
                                     f"M__bs={args.batch_size}_model-lr={args.model_lr}"
                                     f"_epochs={args.epochs}_seed={args.seed}")
-    os.makedirs(args.save_folder, exist_ok=True)
-    os.makedirs(osp.join(args.save_folder, "model"), exist_ok=True)
-    os.makedirs(osp.join(args.save_folder, "curve"), exist_ok=True)
 
-    with open(osp.join(args.save_folder, "hparams.json"), "w") as f:
-        json.dump(vars(args), f, indent=4)
+    if not args.evaluate:
+        os.makedirs(args.save_folder, exist_ok=True)
+        os.makedirs(osp.join(args.save_folder, "model"), exist_ok=True)
+        os.makedirs(osp.join(args.save_folder, "curve"), exist_ok=True)
+
+        with open(osp.join(args.save_folder, "hparams.json"), "w") as f:
+            json.dump(vars(args), f, indent=4)
+    else:
+        args.model_path = osp.join(args.save_folder, "model", "model.pth")
+        os.makedirs(osp.join(args.save_folder, "evaluate"), exist_ok=True)
+
+        with open(osp.join(args.save_folder, "hparams_eval.json"), "w") as f:
+            json.dump(vars(args), f, indent=4)
+
+
+def main(args):
+
+    setup(args)
 
     plot_dic = {
         "loss_label": [],
@@ -241,5 +165,58 @@ def main():
     save_stats(plot_dict=plot_dic, save_path=osp.join(args.save_folder, "model", "stats.txt"))
 
 
+def main_evaluate(args):
+
+    setup(args)
+
+    # load dataset and model
+    train_loader, val_loader = load_dataset(dataset=args.dataset, data_root=args.data_root,
+                                            batch_size=args.batch_size, shuffle_train=False, data_aug_train=False)
+    train_loader_sample, _ = load_dataset(dataset=args.dataset, data_root=args.data_root,
+                                          batch_size=1, shuffle_train=False, data_aug_train=False)
+    model, _, _, _, _ = load_model(args=args)
+    model.load_state_dict(torch.load(args.model_path, map_location=torch.device(f"cuda:{args.gpu_id}")))
+    model.eval()
+    print(f"Model loaded from {args.model_path}")
+
+    # sample some input images for calculating transformation complexity (See Appendix G.1)
+    num_classes = get_num_classes(args.dataset)
+    input, label = sample_input(num_classes=num_classes, num_per_class=args.num_per_class,
+                                data_loader=train_loader_sample, device=args.gpu_id)
+
+    # generating the gating states
+    with torch.no_grad():
+        model(input)
+    num_samples = input.shape[0]
+    sigma = [model.sigma_list[layer_id].reshape(num_samples, -1) for layer_id in model.sigma_list.keys()]
+    sigma = torch.cat(sigma, dim=1)
+    sigma_label = [sigma, label]
+
+    # calculate transformation complexity
+    ret_dict = {}
+    network_info = calc_information_for_epoch_KDE(sigma_label, device=args.gpu_id)
+    HS = network_info[0]['local_IXT']  # H(\Sigma)
+    ISY = network_info[0]['local_ITY']  # I(X;\Sigma;Y)
+    ret_dict["HS"] = HS.item()
+    ret_dict["ISY"] = ISY.item()
+
+    # calculate loss and accuracy
+    _, train_loss = eval_acc_loss(model, train_loader, device=args.gpu_id)
+    test_acc, test_loss = eval_acc_loss(model, val_loader, device=args.gpu_id)
+    ret_dict["train_loss"] = train_loss
+    ret_dict["test_loss"] = test_loss
+    ret_dict["test_acc"] = test_acc
+
+    save_obj(ret_dict, osp.join(args.save_folder, "evaluate", "info.bin"))
+    with open(osp.join(args.save_folder, "evaluate", "info.json"), "w") as f:
+        json.dump(ret_dict, f, indent=4)
+
+    return ret_dict
+
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    if not args.evaluate:
+        main(args)
+    else:
+        main_evaluate(args)

@@ -1,8 +1,13 @@
 import time
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm
+import matplotlib
+from typing import Tuple
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from .lib import AverageMeter
 
 
@@ -219,3 +224,152 @@ def langevin_dynamics(sigma_l, step_l, delta_tau, f, q, device):
 
 def energy_function(f, q, sigma):
     return - f(sigma) - q(sigma)
+
+
+def plot_curve(plot_dict: dict, save_path: str):
+    num_figures = len(plot_dict) - 1
+    n_rows = int(np.ceil(num_figures / 4))
+
+    plt.figure(figsize=(16, 3.75 * n_rows), dpi=200)
+
+    epoch = len(plot_dict[list(plot_dict.keys())[0]])
+    X = np.arange(1, epoch + 1)
+
+    plt.subplot(n_rows, 4, 1)
+    plt.xlabel('epoch')
+    plt.ylabel(r'$Loss_{DNN}=Loss_{label}+\lambda Loss_{compl.}$')
+    plt.plot(X, plot_dict["loss_total"], label=r"$Loss_{DNN}$")
+    plt.legend()
+
+    plt.subplot(n_rows, 4, 2)
+    plt.xlabel('epoch')
+    plt.ylabel('train_test_precision')
+    plt.plot(X, plot_dict["train_acc"], color='b', label="train_acc")
+    plt.plot(X, plot_dict["test_acc"], color='r', label="test_acc")
+    plt.legend()
+
+    plt.subplot(n_rows, 4, 3)
+    plt.xlabel('epoch')
+    plt.ylabel(r'$Loss_{task}$')
+    plt.plot(X, plot_dict["loss_label"], label=r"$Loss_{task}$")
+    plt.legend()
+
+    plt.subplot(n_rows, 4, 4)
+    plt.xlabel('epoch')
+    plt.ylabel(r'\lambda $Loss_{compl.}$')
+    plt.plot(X, plot_dict["loss_compl"], label=r"$\lambda Loss_{compl.}$")
+    plt.legend()
+
+    fig_id = 5
+    ebm_id = 0
+    while True:
+        if f"loss_compl_{ebm_id}" not in plot_dict:
+            break
+        plt.subplot(n_rows, 4, fig_id)
+        plt.xlabel('epoch')
+        plt.ylabel(r'$Loss_{compl.,' + f'{ebm_id}' + r'}$')
+        plt.plot(X, plot_dict[f"loss_compl_{ebm_id}"], label=r'$Loss_{compl.,' + f'{ebm_id}' + r'}$')
+        plt.legend()
+        ebm_id += 1
+        fig_id += 1
+
+    ebm_id = 0
+    while True:
+        if f"loss_f_{ebm_id}" not in plot_dict:
+            break
+        plt.subplot(n_rows, 4, fig_id)
+        plt.xlabel('epoch')
+        plt.ylabel(r'$L_{f, ' + f'{ebm_id}' + r'}$')
+        plt.plot(X, plot_dict[f"loss_f_{ebm_id}"], label=r'$L_{f, ' + f'{ebm_id}' + r'}$')
+        plt.legend()
+        ebm_id += 1
+        fig_id += 1
+
+    ebm_id = 0
+    while True:
+        if f"p_{ebm_id}" not in plot_dict:
+            break
+        plt.subplot(n_rows, 4, fig_id)
+        plt.xlabel('epoch')
+        plt.ylabel(r"$\hat{p}_" + f"{ebm_id}" + r"$")
+        plt.plot(X, plot_dict[f"p_{ebm_id}"], label=r"$\hat{p}_" + f"{ebm_id}" + r"$")
+        plt.legend()
+        ebm_id += 1
+        fig_id += 1
+
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close("all")
+
+
+def save_stats(plot_dict: dict, save_path: str):
+    item_length = len(plot_dict[list(plot_dict.keys())[0]])
+    for key in plot_dict.keys():
+        assert len(plot_dict[key]) == item_length
+    with open(save_path, "w") as f:
+        print(",".join(list(plot_dict.keys())), file=f)
+        for i in range(item_length):
+            for key in plot_dict.keys():
+                f.write(f"{plot_dict[key][i]},")
+            f.write("\n")
+    return
+
+
+def sample_input(
+        num_classes: int,
+        num_per_class: int,
+        data_loader: DataLoader,
+        device: int = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Sample `num_per_class` input images for each category from the dataset
+    :param num_classes:
+    :param num_per_class:
+    :param data_loader
+    :return:
+    """
+    sampled_inputs = []
+    sampled_labels = []
+
+    if device is None:
+        device = torch.device("cpu")
+
+    slot = {i: num_per_class for i in range(num_classes)}
+    # for input, label in tqdm(data_loader, desc="sampling", mininterval=1):
+    for input, label in data_loader:
+        input = input.to(device)
+        label = label.to(device)
+
+        if slot[label.item()] > 0:
+            sampled_inputs.append(input)
+            sampled_labels.append(label)
+            slot[label.item()] -= 1
+        if sum(slot.values()) == 0:
+            break
+
+    return torch.cat(sampled_inputs, dim=0), torch.cat(sampled_labels, dim=0)
+
+
+def eval_acc_loss(
+        model: nn.Module,
+        data_loader: DataLoader,
+        device: int = None
+):
+    if device is None:
+        device = torch.device("cpu")
+    criterion = nn.CrossEntropyLoss()
+    with torch.no_grad():
+        losses = AverageMeter()
+        correct = 0
+        model.eval()
+        with torch.no_grad():
+            # for images, labels in tqdm(data_loader, desc="train", mininterval=1):
+            for images, labels in data_loader:
+                images, labels = images.to(device), labels.to(device)
+                output = model(images)
+                loss = criterion(output, labels)
+                y_pred = output.data.max(1)[1]
+                correct += y_pred.eq(labels.data).sum()
+                losses.update(loss.item(), images.shape[0])
+        acc = 100. * float(correct) / len(data_loader.dataset)
+    return acc, losses.avg
