@@ -1,6 +1,6 @@
 # Transformation Complexity
 
-PyTorch implementation of the paper "Towards Theoretical Analysis of Transformation Complexity of ReLU DNNs"
+PyTorch implementation of the paper ["Towards Theoretical Analysis of Transformation Complexity of ReLU DNNs"](https://arxiv.org/abs/2205.01940)
 
 ## Requirements
 
@@ -10,10 +10,6 @@ PyTorch implementation of the paper "Towards Theoretical Analysis of Transformat
 ## Usage
 
 **Diagnose the transformation complexity of a trained DNN**
-
-*TODO*
-
-**Correlation between the complexity and the disentanglement**
 
 *TODO*
 
@@ -30,3 +26,9 @@ python3 main_penalize_transformation.py --dataset=cifar10 --arch=resmlp10 \
 
 To evaluate the transformation complexity of the above trained DNN, you can add the `--evaluate` flag after your command.
 
+**Demos**
+
+We have also provided some demos to reproduce results in the paper.
+
+1. The utility of the complexity loss. See [`notebooks/penalize_transformation_complexity.ipynb`](notebooks/penalize_transformation_complexity.ipynb)
+2. TBD
