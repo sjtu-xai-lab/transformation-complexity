@@ -103,7 +103,7 @@ def train(args, train_loader, model, f_list, q_list, criterion, optimizer, f_opt
         if not args.default_train:
             complexity_loss = sum(loss_compl_list) * (10 ** args.loss_lambda)
         else:
-            complexity_loss = sum(loss_compl_list) * 0
+            complexity_loss = torch.zeros([])
 
         # update the model
         optimizer.zero_grad()

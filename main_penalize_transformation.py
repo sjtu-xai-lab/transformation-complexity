@@ -76,9 +76,11 @@ def parse_args():
 
 def load_model(args):
     model = models.__dict__[args.arch](activation_type="swish").to(args.gpu_id)
-    model.set_store_soft_gating_states(save_layers=args.penalize_layers)
     optimizer = torch.optim.SGD(model.parameters(), args.model_lr, momentum=0.9, weight_decay=5e-4)
+    if args.default_train:
+        return model, [], [], optimizer, []
 
+    model.set_store_soft_gating_states(save_layers=args.penalize_layers)
     f_list = [ebms.__dict__[e_func]().to(args.gpu_id) for e_func in args.energy_functions.split(",")]
     q_list = [ActRateTracker(n_channels=int(n_c)).to(args.gpu_id) for n_c in args.n_channels.split(",")]
     f_optimizer_list = [
