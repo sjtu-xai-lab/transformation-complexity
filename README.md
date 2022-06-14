@@ -5,13 +5,20 @@ PyTorch implementation of the paper ["Towards Theoretical Analysis of Transforma
 ## Requirements
 
 - Python 3
+- PyTorch==1.8.0
 
 
 ## Usage
 
 **Diagnose the transformation complexity of a trained DNN**
 
-*TODO*
+You can run the following code to evaluate the transformation complexity of a network. Please manually extract the gating states in the model, and specify the model root as follows.
+
+~~~shell
+python3 main_evaluate_complexity.py --dataset=mnist --arch=mlp_mnist \
+        --epochs=501 --eval-interval=5 \
+        --model-root=./saved-models/dataset=mnist_model=mlp
+~~~
 
 **Penalize the transformation complexity**
 
@@ -30,5 +37,5 @@ To evaluate the transformation complexity of the above trained DNN, you can add 
 
 We have also provided some demos to reproduce results in the paper.
 
-1. The utility of the complexity loss. See [`notebooks/penalize_transformation_complexity.ipynb`](notebooks/penalize_transformation_complexity.ipynb)
-2. TBD
+1. Evaluation of transformation complexity. See [`notebooks/evaluate_transformation_complexity.ipynb`](notebooks/evaluate_transformation_complexity.ipynb)
+2. The utility of the complexity loss. See [`notebooks/penalize_transformation_complexity.ipynb`](notebooks/penalize_transformation_complexity.ipynb)

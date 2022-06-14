@@ -13,7 +13,8 @@ import models
 import ebms
 from ebms import ActRateTracker
 from datasets import load_dataset, get_num_classes
-from tools.penalize_transformation import validate, train, plot_curve, save_stats, sample_input, eval_acc_loss
+from tools.penalize_transformation import validate, train, plot_curve, save_stats, eval_acc_loss
+from tools.utils import sample_input
 from metrics.calc_info import calc_information_for_epoch_KDE
 from tools.lib import update_lr, save_obj, set_seed
 
