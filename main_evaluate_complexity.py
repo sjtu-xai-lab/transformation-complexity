@@ -57,6 +57,10 @@ def main():
             _ = net(sampled_inputs)
             sigma = [t.flatten(start_dim=1) for t in net.sigma_list]
             sigma = torch.cat(sigma, dim=1)
+            for t in net.sigma_list:
+                if len(t.shape) == 4:
+                    sigma = sigma.unsqueeze(2).unsqueeze(3)
+                    break
 
         sigma = [sigma, sampled_labels]
         network_info = calc_information_for_epoch_KDE(sigma, device=args.gpu_id)

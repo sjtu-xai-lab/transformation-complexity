@@ -193,6 +193,10 @@ def main_evaluate(args):
     num_samples = input.shape[0]
     sigma = [model.sigma_list[layer_id].reshape(num_samples, -1) for layer_id in model.sigma_list.keys()]
     sigma = torch.cat(sigma, dim=1)
+    for t in model.sigma_list.values():
+        if len(t.shape) == 4:
+            sigma = sigma.unsqueeze(2).unsqueeze(3)
+            break
     sigma_label = [sigma, label]
 
     # calculate transformation complexity
